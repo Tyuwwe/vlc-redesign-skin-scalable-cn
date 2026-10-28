@@ -114,40 +114,58 @@ def corner(r, color, which):
 
 # --- text --------------------------------------------------------------------
 
-# Inter, the design's typeface (SIL Open Font License, fonts/Inter-LICENSE.txt), from the
-# official 4.1 release. skins2 loads only fonts shipped inside the skin, so these are bundled.
+# Inter, the design's typeface, and Noto Sans SC for Chinese text are bundled because
+# skins2 loads only fonts shipped inside the skin. Both use the SIL Open Font License.
 FONTS = ROOT / "fonts"
-FONT_FILES = {"regular": FONTS / "Inter-Regular.ttf", "semibold": FONTS / "Inter-SemiBold.ttf"}
-FONT_LICENSE = FONTS / "Inter-LICENSE.txt"
+FONT_FILES = {
+    "regular": FONTS / "Inter-Regular.ttf",
+    "semibold": FONTS / "Inter-SemiBold.ttf",
+    "cjk": FONTS / "NotoSansSC-Regular.otf",
+}
+FONT_LICENSES = (FONTS / "Inter-LICENSE.txt", FONTS / "NotoSansSC-LICENSE.txt")
+FONT_LICENSE = FONT_LICENSES[0]
 
 
-def rows_font(dst, size, row):
-    """Write a copy of Inter Regular for playlist rows and return its path.
+def rows_font(dst, size, row, weight="regular", family="Inter Rows"):
+    """Write a copy of a bundled font for playlist rows and return its path.
 
     skins2 draws each playlist row's text at the bottom of the row, so where the text sits
     depends only on the font's descender. This copy has a deeper descender, chosen so the
     capitals of `size`-pixel text sit in the middle of a `row`-pixel row. The glyphs are
-    untouched; the family is renamed "Inter Rows", as a modified font should be (OFL)."""
+    untouched; the family is renamed, as a modified font should be (OFL)."""
     from fontTools.ttLib import TTFont
-    f = TTFont(FONT_FILES["regular"], recalcTimestamp=False)   # same bytes every build
+    f = TTFont(FONT_FILES[weight], recalcTimestamp=False)   # same bytes every build
     upm, asc = f["head"].unitsPerEm, f["hhea"].ascent
     target = round((row - f["OS/2"].sCapHeight * size / upm) / 2)
     asc_px = asc * size / upm
     # FreeType rounds these metrics up, down or to nearest depending on the font's flags,
-    # so pick a descender every rounding agrees on, with ascender + descender as well
+    # so pick a descender every rounding agrees on, preferably with ascender + descender too
+    fallback = None
     for units in range(round((target - .5) * upm / size), round(target * upm / size) + 1):
         d = units * size / upm
-        if -((-d) // 1) == round(d) == target and round(asc_px + d + 1e-9) == -((-asc_px) // 1) + target:
-            break
+        if -((-d) // 1) == round(d) == target:
+            fallback = units
+            if round(asc_px + d + 1e-9) == -((-asc_px) // 1) + target:
+                break
     else:
-        raise ValueError(f"no clean descender for {size}px text in {row}px rows")
+        if fallback is None:
+            raise ValueError(f"no clean descender for {size}px text in {row}px rows")
+        units = fallback
     f["hhea"].descent = -units
     f["OS/2"].sTypoDescender = -units
     f["OS/2"].usWinDescent = units
+    source_family = f["name"].getDebugName(1)
+    source_ps = f["name"].getDebugName(6)
+    ps = "".join(family.split()) + source_ps[source_ps.rfind("-"):]
     for rec in f["name"].names:
         if rec.nameID in (1, 3, 4, 16, 6):
             old = rec.toUnicode()
-            rec.string = old.replace("Inter-", "InterRows-") if rec.nameID == 6 else old.replace("Inter", "Inter Rows", 1)
+            if rec.nameID == 6:
+                rec.string = ps
+            elif rec.nameID == 3:
+                rec.string = old.replace(source_ps, ps)
+            else:
+                rec.string = old.replace(source_family, family, 1)
     f.save(dst)
     return Path(dst)
 

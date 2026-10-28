@@ -1,9 +1,13 @@
 """Time how long VLC takes to show a skin's main window.
 
+    python tools/startup_time.py
+    python tools/startup_time.py --scale 2
+    python tools/startup_time.py --language zh-CN
     python tools/startup_time.py dist/VLC-Redesign.vlt "C:/Program Files/VideoLAN/VLC/skins/default.vlt"
 
-Each skin is launched --runs times (with --ignore-config, so the user's settings are
-untouched); prints the median seconds from process start to a visible skins2 window.
+With no paths, measures the unpacked skin selected by --scale and --language. Each skin is
+launched --runs times (with --ignore-config, so the user's settings are untouched); prints the
+median seconds from process start to a visible skins2 window.
 """
 import argparse
 import ctypes
@@ -14,6 +18,7 @@ import subprocess
 import time
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
 VLC = r"C:\Program Files\VideoLAN\VLC\vlc.exe"
 user32 = ctypes.windll.user32
 
@@ -61,10 +66,18 @@ def once(skin):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("skins", nargs="+")
+    ap.add_argument("skins", nargs="*")
     ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--scale", type=int, choices=(1, 2), default=1,
+                    help="default unpacked skin to measure when no paths are given")
+    ap.add_argument("--language", choices=("en", "zh-CN"), default="en",
+                    help="language of the default unpacked skin")
     a = ap.parse_args()
-    for skin in a.skins:
+    directory = "VLC-Redesign-CN" if a.language == "zh-CN" else "VLC-Redesign"
+    if a.scale == 2:
+        directory += "-2x"
+    skins = a.skins or [ROOT / "dist" / directory / "theme.xml"]
+    for skin in skins:
         path = Path(skin).resolve()
         times = [once(path) for _ in range(a.runs)]
         print(f"{statistics.median(times):6.2f} s  (runs: {', '.join(f'{t:.2f}' for t in times)})  {path}")

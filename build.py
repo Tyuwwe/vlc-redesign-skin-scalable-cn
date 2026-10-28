@@ -3,8 +3,9 @@
 
     python build.py
 
-Writes dist/VLC-Redesign/ (theme.xml, img/, fonts/) and dist/VLC-Redesign.vlt.
-Load either in VLC with Tools > Preferences > Interface > "Use custom skin", or run
+Writes English and Simplified Chinese 1x and 2x themes and archives under dist/. Use
+--language to select one language and --scale 1 or --scale 2 to select one scale. Load either
+in VLC with Tools > Preferences > Interface > "Use custom skin", or run
 
     vlc.exe -I skins --skins2-last="C:\\dev\\vlcskin\\dist\\VLC-Redesign.vlt"
 
@@ -23,6 +24,7 @@ from pathlib import Path
 import sys
 
 from skinlib import paint as P
+from skinlib.i18n import translate
 from skinlib.palette import DARK, LIGHT, THEMES
 from skinlib.skin import Layout, Skin
 
@@ -32,7 +34,6 @@ import check_theme  # noqa: E402  (tools/ is not a package)
 
 NAME = "VLC-Redesign"
 DIST = ROOT / "dist"
-OUT = DIST / NAME
 ICONS = P.Icons()
 
 # The widest seek track whose fill can follow the handle (see progress()): a track this
@@ -43,27 +44,34 @@ STOPPED, ACTIVE = "vlc.isStopped", "not vlc.isStopped"
 ART_VIEW = "not vlc.isStopped and not vlc.hasVout"
 
 
-def lid(t, kind):
+def lid(t, kind, scale=1, language="en"):
     """Layout ids: dark_full, dark_side, dark_mini, dark_eq, dark_fsc and the light_ ones."""
-    return f"{t['name']}_{kind}"
+    language_suffix = "_cn" if language == "zh-CN" else ""
+    scale_suffix = "_2x" if scale == 2 else ""
+    return f"{t['name']}_{kind}{language_suffix}{scale_suffix}"
+
+
+def text_weight(language, weight="regular"):
+    return "cjk" if language == "zh-CN" else weight
 
 
 def other(t):
     return LIGHT if t is DARK else DARK
 
 
-def switch_theme(t, kind):
+def switch_theme(t, kind, scale=1, language="en"):
     o = other(t)
-    return (f"main.setLayout({lid(o, kind)});eqwin.setLayout({lid(o, 'eq')});"
-            f"fullscreenController.setLayout({lid(o, 'fsc')})")
+    return (f"main.setLayout({lid(o, kind, scale, language)});"
+            f"eqwin.setLayout({lid(o, 'eq', scale, language)});"
+            f"fullscreenController.setLayout({lid(o, 'fsc', scale, language)})")
 
 
 class Art:
     """Theme-bound bitmap factory. Ids are prefixed with the theme name; `on` names the
     palette colour of the surface an image sits on, and its edges are composited onto it."""
 
-    def __init__(self, skin, t):
-        self.skin, self.t = skin, t
+    def __init__(self, skin, t, language="en"):
+        self.skin, self.t, self.language = skin, t, language
 
     def get(self, key, make, on=None, opaque=False):
         """opaque fills the whole image with the surface colour, not just its edges: skins2
@@ -128,13 +136,15 @@ class Art:
     def labelled_button(self, key, icon, label, w, h, ix, iy, tx, base, size, on, colors=("icon", "icon_hover", "icon_down")):
         """An icon followed by text, e.g. the top bar's 'Open media'."""
         t = self.t
+        label = translate(label, self.language)
+        weight = text_weight(self.language)
 
         def draw(bg, color):
             img = P.blank(w, h)
             if bg:
                 img.alpha_composite(P.rrect(w, h, (0, 0, w, h), 6, t[bg]))
             img.alpha_composite(ICONS.tint(icon, t[color]), (ix, iy))
-            return P.text(img, tx, base, label, size, t[color])
+            return P.text(img, tx, base, label, size, t[color], weight=weight)
         return self.states(key, draw, ((None, colors[0]), ("hover_bg", colors[1]), ("down_bg", colors[2])), on)
 
     def handle(self, w, h, r, colors, on, key):
@@ -220,7 +230,7 @@ def control_bar(L, art, oy, W, *, fixed, bg, last):
     """The 54 px bar along the bottom. Positions are those of the Figma component: the left
     group pinned left, the right group pinned right, the seek track stretching between.
     last(x, y, anchor) draws the rightmost button."""
-    t = art.t
+    t, language = art.t, art.language
     A = (lambda a: "tl") if fixed else (lambda a: a)
     f16 = L.skin.font(16)
     base = oy + 33 - P.ascent(16)   # the Figma digits sit on y = 33 of the bar
@@ -228,35 +238,39 @@ def control_bar(L, art, oy, W, *, fixed, bg, last):
     progress(L, art, x0=254, x1=W - 428, y=oy + 13, h=28, inset=2, r_track=6, r_fill=4,
              handle=(8, 24, 4), anchor_l=A("bl"), anchor_s=A("bottom"), bg=bg)
 
-    L.button(art.icon_button("previous"), 20, oy + 13, "playlist.previous()", "Previous", anchor=A("bl"))
+    L.button(art.icon_button("previous"), 20, oy + 13, "playlist.previous()",
+             translate("Previous", language), anchor=A("bl"))
     L.toggle("vlc.isPlaying", art.accent_button("play", 54, 28), art.accent_button("pause", 54, 28),
-               "vlc.play()", "vlc.pause()", "Play", "Pause", x=58, y=oy + 13, anchor=A("bl"))
-    L.button(art.icon_button("next"), 120, oy + 13, "playlist.next()", "Next", anchor=A("bl"))
+               "vlc.play()", "vlc.pause()", translate("Play", language), translate("Pause", language),
+               x=58, y=oy + 13, anchor=A("bl"))
+    L.button(art.icon_button("next"), 120, oy + 13, "playlist.next()", translate("Next", language), anchor=A("bl"))
     L.text("$T", 170, base, 76, f16, t["text"], align="center", anchor=A("bl"), visible=ACTIVE)
 
     L.text("$D", W - 420, base, 76, f16, t["text"], align="center", anchor=A("br"), visible=ACTIVE)
     L.toggle("vlc.isMute", art.icon_button("volume"), art.icon_button("mute"), "vlc.mute()", "vlc.mute()",
-               "Mute", "Unmute", x=W - 327, y=oy + 13, anchor=A("br"))
+               translate("Mute", language), translate("Unmute", language), x=W - 327, y=oy + 13, anchor=A("br"))
     frames = art.get("volume.frames", lambda: P.volume_frames(t), on="chrome")
     L.slider("volume", W - 292, oy + 13, "(0,27),(87,27)", up=art.nothing(), w=88, h=28,
-             tip="Volume: $V%", anchor=A("br"), background=(frames, 9, 10), hint="volume")
+             tip=translate("Volume: $V%", language), anchor=A("br"), background=(frames, 9, 10), hint="volume")
 
     L.toggle("eqwin.isVisible", art.icon_button("audio", 30, 32, 3, 4),
                art.icon_button("audio", 30, 32, 3, 4, active=True), "eqwin.show()", "eqwin.hide()",
-               "Equalizer", "Hide equalizer", x=W - 184, y=oy + 11, anchor=A("br"))
+               translate("Equalizer", language), translate("Hide equalizer", language),
+               x=W - 184, y=oy + 11, anchor=A("br"))
     L.button(art.icon_button("subtitles", 30, 32, 3, 4), W - 142, oy + 11, "dialogs.popup()",
-             "Subtitles, tracks and the rest of VLC's menu", anchor=A("br"))
-    L.button(art.icon_button("playback_settings", 30, 32, 3, 4), W - 100, oy + 11, "playback_menu.show()",
-             "Playback", anchor=A("br"))
+             translate("Subtitles, tracks and the rest of VLC's menu", language), anchor=A("br"))
+    playback_menu = "playback_menu_cn" if language == "zh-CN" else "playback_menu"
+    L.button(art.icon_button("playback_settings", 30, 32, 3, 4), W - 100, oy + 11,
+             f"{playback_menu}.show()", translate("Playback", language), anchor=A("br"))
     last(W - 50, oy + 11, A("br"))
 
 
 # --- the main window --------------------------------------------------------------
 
-def top_bar(L, art, kind):
+def top_bar(L, art, kind, scale=1):
     """Figma 'topbar' (from Player - Music, 4767:23728): 40 px with the cone, menu, sidebar
     toggle and media button on the left, the title centred, window buttons on the right."""
-    t, W = art.t, L.w
+    t, W, language = art.t, L.w, art.language
     chrome = art.px("chrome")
     L.image(chrome, 0, 0, W, 40, anchor="top", resize="scale", action="move",
             action2="main.maximize()", visible="not main.isMaximized", hint="titlebar")
@@ -270,36 +284,46 @@ def top_bar(L, art, kind):
         img.alpha_composite(ICONS.raw("vlc"), (7, 2))
         return img
     L.button(art.states("tb.cone", cone, ((None,), ("hover_bg",), ("down_bg",)), "chrome"),
-             6, 6, "dialogs.popup()", "VLC menu")
-    L.button(art.icon_button("more", 28, 28, 2, 2), 51, 6, f"{lid(t, kind)}_menu.show()", "Menu")
+             6, 6, "dialogs.popup()", translate("VLC menu", language))
+    L.button(art.icon_button("more", 28, 28, 2, 2), 51, 6,
+             f"{lid(t, kind, scale, language)}_menu.show()", translate("Menu", language))
     if kind == "side":
         L.button(art.icon_button("sidebar", 28, 28, 2, 2, active=True), 89, 6,
-                 f"main.setLayout({lid(t, 'full')})", "Hide playlist")
+                 f"main.setLayout({lid(t, 'full', scale, language)})", translate("Hide playlist", language))
     else:
-        L.button(art.icon_button("sidebar", 28, 28, 2, 2), 89, 6, f"main.setLayout({lid(t, 'side')})",
-                 "Show playlist")
+        L.button(art.icon_button("sidebar", 28, 28, 2, 2), 89, 6,
+                 f"main.setLayout({lid(t, 'side', scale, language)})", translate("Show playlist", language))
     L.image(art.get("tb.divider", lambda: ICONS.tint("divider", t["text_dim"]), "chrome"), 117, 8)
 
     # the Figma breadcrumb shows the media's folder, which skins2 cannot know: it opens media
     label = "Open media"
-    L.button(art.labelled_button("tb.crumb", "folder", label, 32 + P.text_width(label, 14) + 10, 28,
+    weight = text_weight(language)
+    localized_label = translate(label, language)
+    L.button(art.labelled_button("tb.crumb", "folder", label,
+                                 32 + P.text_width(localized_label, 14, weight) + 10, 28,
                                  2, 2, 32, 19, 14, "chrome"),
-             141, 6, "dialogs.fileSimple()", "Open a file")
+             141, 6, "dialogs.fileSimple()", translate("Open a file", language))
 
-    f14 = L.skin.font(14)
-    y = 25 - P.ascent(14)
+    f14 = L.skin.font(14, weight)
+    f14_cjk = L.skin.font(14, "cjk")
+    y = 25 - P.ascent(14, weight)
     # centred, clear of the left group (ends at 251) and the window buttons (start at W - 150);
     # a title too long to fit scrolls, as VLC skins do, rather than being cut off at both ends
-    L.text("$N", 300, y, W - 600, f14, t["text"], align="center", anchor="top", visible=ACTIVE, scrolling="auto")
-    L.text("VLC Media Player", 300, y, W - 600, f14, t["text"], align="center", anchor="top", visible=STOPPED)
+    L.text("$N", 300, 25 - P.ascent(14, "cjk"), W - 600, f14_cjk, t["text"], align="center",
+           anchor="top", visible=ACTIVE, scrolling="auto")
+    L.text(translate("VLC Media Player", language), 300, y, W - 600, f14, t["text"],
+           align="center", anchor="top", visible=STOPPED)
 
-    L.button(art.window_button("minimize"), W - 150, 8, "vlc.minimize()", "Minimize", anchor="tr")
-    L.button(art.window_button("maximize"), W - 114, 8, "main.maximize()", "Maximize", anchor="tr",
-             visible="not main.isMaximized")
-    L.button(art.window_button("maximize"), W - 114, 8, "main.unmaximize()", "Restore", anchor="tr",
-             visible="main.isMaximized")
-    L.button(art.window_button("fullscreen"), W - 78, 8, "vlc.fullscreen()", "Fullscreen", anchor="tr")
-    L.button(art.window_button("close", danger=True), W - 42, 8, "vlc.quit()", "Quit VLC", anchor="tr")
+    L.button(art.window_button("minimize"), W - 150, 8, "vlc.minimize()",
+             translate("Minimize", language), anchor="tr")
+    L.button(art.window_button("maximize"), W - 114, 8, "main.maximize()",
+             translate("Maximize", language), anchor="tr", visible="not main.isMaximized")
+    L.button(art.window_button("maximize"), W - 114, 8, "main.unmaximize()",
+             translate("Restore", language), anchor="tr", visible="main.isMaximized")
+    L.button(art.window_button("fullscreen"), W - 78, 8, "vlc.fullscreen()",
+             translate("Fullscreen", language), anchor="tr")
+    L.button(art.window_button("close", danger=True), W - 42, 8, "vlc.quit()",
+             translate("Quit VLC", language), anchor="tr")
 
 
 def stage(L, art, x0, y0, x1, y1, outside):
@@ -315,9 +339,9 @@ def stage(L, art, x0, y0, x1, y1, outside):
     # the media's cover; with none, its fallback is the black pixel, so nothing shows
     L.image(black, x0 + 60, y0 + 48, w - 120, h - 48 - 120, anchor="fill", resize="scale2", art=True,
             visible=ART_VIEW, hint="cover")
-    f20 = L.skin.font(20)
-    L.text("$N", x0 + 20, y1 - 62 - P.ascent(20), w - 40, f20, t["stage_text"], align="center", scrolling="auto",
-           anchor="bottom", visible=ART_VIEW)
+    f20 = L.skin.font(20, "cjk")
+    L.text("$N", x0 + 20, y1 - 62 - P.ascent(20, "cjk"), w - 40, f20, t["stage_text"],
+           align="center", scrolling="auto", anchor="bottom", visible=ART_VIEW)
 
     L.video(x0, y0, w, h, visible="vlc.hasVout")
 
@@ -331,7 +355,7 @@ def stage(L, art, x0, y0, x1, y1, outside):
 
 def repeat_controls(L, art, x, y, on):
     """Off -> repeat all -> repeat one -> off, the way VLC's own button cycles."""
-    t = art.t
+    t, language = art.t, art.language
     off = art.icon_button("repeat", 28, 28, 2, 2, on=on)
     all_ = art.icon_button("repeat", 28, 28, 2, 2, active=True, on=on)
 
@@ -343,11 +367,12 @@ def repeat_controls(L, art, x, y, on):
         return P.text(img, 14, 18, "1", 9, t[color], weight="semibold", align="center")
     one = art.states("repeat1", one_draw, ((None, "accent"), ("hover_bg", "accent_hover"), ("down_bg", "accent_down")), on)
     L.toggle("playlist.isLoop", off, all_, "playlist.setLoop(true)", "playlist.setLoop(false);playlist.setRepeat(true)",
-               "Repeat all", "Repeat one", x=x, y=y, visible="not playlist.isRepeat")
-    L.button(one, x, y, "playlist.setRepeat(false)", "Repeat off", visible="playlist.isRepeat")
+               translate("Repeat all", language), translate("Repeat one", language),
+               x=x, y=y, visible="not playlist.isRepeat")
+    L.button(one, x, y, "playlist.setRepeat(false)", translate("Repeat off", language), visible="playlist.isRepeat")
 
 
-# Playlist rows (Figma sidebar list): ROW px tall, text in the "Inter Rows" font
+# Playlist rows (Figma sidebar list): ROW px tall, text in the "VLC Redesign Rows" font
 ROW, ROW_TEXT = 32, 14
 
 
@@ -363,44 +388,51 @@ def playtree_item(t):
     return img
 
 
-def sidebar(L, art):
+def sidebar(L, art, scale=1):
     """Figma 'sidebar' (848:1996): a 48 px rail and a 379 px panel, here holding the playlist.
     VLC 3 has no media library views, so the rail offers VLC's ways to open media instead."""
-    t, H = art.t, L.h
+    t, H, language = art.t, L.h, art.language
     top, bottom = 40, H - 54
-    rail = (("playlist", f"main.setLayout({lid(t, 'full')})", "Hide playlist", True),
+    rail = (("playlist", f"main.setLayout({lid(t, 'full', scale, language)})", "Hide playlist", True),
             ("file", "dialogs.file()", "Open files", False),
             ("folder", "dialogs.directory()", "Open a folder", False),
             ("disc", "dialogs.disc()", "Open a disc", False),
             ("streaming", "dialogs.net()", "Open a network stream", False),
             ("info", "dialogs.fileInfo()", "Media information", False))
     for i, (icon, action, tip, active) in enumerate(rail):
-        L.button(art.icon_button(icon, 36, 36, 6, 6, active=active), 6, 47 + 46 * i, action, tip)
-    L.button(art.icon_button("preferences", 36, 36, 6, 6), 6, bottom - 46, "dialogs.prefs()", "Preferences",
-             anchor="bl")
+        L.button(art.icon_button(icon, 36, 36, 6, 6, active=active), 6, 47 + 46 * i,
+                 action, translate(tip, language))
+    L.button(art.icon_button("preferences", 36, 36, 6, 6), 6, bottom - 46, "dialogs.prefs()",
+             translate("Preferences", language), anchor="bl")
 
     x0, x1 = 48, 427
+    heading_weight = text_weight(language, "semibold")
+    body_weight = text_weight(language)
     L.image(art.px("panel"), x0, top, x1 - x0, bottom - top, anchor="left", resize="scale", hint="sbpanel")
-    L.text("Playlist", 70, 79 - P.ascent(16, "semibold"), 200, L.skin.font(16, "semibold"), t["text_hi"])
+    L.text(translate("Playlist", language), 70, 79 - P.ascent(16, heading_weight), 200,
+           L.skin.font(16, heading_weight), t["text_hi"])
     L.toggle("playlist.isRandom", art.icon_button("shuffle", 28, 28, 2, 2, on="panel"),
                art.icon_button("shuffle", 28, 28, 2, 2, active=True, on="panel"), "playlist.setRandom(true)",
-               "playlist.setRandom(false)", "Shuffle", "Shuffle off", x=301, y=58)
+               "playlist.setRandom(false)", translate("Shuffle", language), translate("Shuffle off", language),
+               x=301, y=58)
     repeat_controls(L, art, 339, 58, "panel")
     L.button(art.icon_button("open", 28, 28, 2, 2, on="panel"), 377, 58, "dialogs.playlist()",
-             "Open VLC's playlist window")
+             translate("Open VLC's playlist window", language))
 
-    L.text("Queue", 70, 120 - P.ascent(13), 120, L.skin.font(13), t["text_dim"])
+    L.text(translate("Queue", language), 70, 120 - P.ascent(13, body_weight), 120,
+           L.skin.font(13, body_weight), t["text_dim"])
     for i, (icon, action, tip) in enumerate((("sort", "playlist.sort()", "Sort by title"),
                                              ("folder", "playlist.load()", "Load a playlist file"),
                                              ("save", "playlist.save()", "Save the playlist"),
                                              ("remove", "playlist.del()", "Remove selected items"))):
-        L.button(art.icon_button(icon, 28, 28, 2, 2, on="panel"), 263 + 38 * i, 100, action, tip)
+        L.button(art.icon_button(icon, 28, 28, 2, 2, on="panel"), 263 + 38 * i, 100,
+                 action, translate(tip, language))
     L.image(art.px("divider"), 70, 142, 336, 1, resize="scale", hint="sbdivider")
 
     # 'Add media' and the playlist rows share their height and their icon and text columns
     L.button(art.labelled_button("sb.add", "add", "Add media", 342, ROW, 4, (ROW - 24) // 2, 38,
                                  ROW // 2 + 5, ROW_TEXT, "panel", colors=("text", "icon_hover", "icon_down")),
-             64, 152, "playlist.add()", "Add files to the playlist")
+             64, 152, "playlist.add()", translate("Add files to the playlist", language))
 
     ty, th = 152 + ROW + 4, bottom - 10 - (152 + ROW + 4)
     thumb = art.get("sb.thumb", lambda: P.rrect(4, 40, (0, 0, 4, 40), 2, P.mix(t["panel"], t["text"], .35)), "panel")
@@ -412,27 +444,30 @@ def sidebar(L, art):
                scrollbar=(410, ty, f"(2,{th - 20}),(2,20)", thumb, thumb_over))
 
 
-def full_layout(skin, win, t, side):
+def full_layout(skin, win, t, side, scale=1, language="en"):
     """The main player, 1280 x 720 by default and resizable. side=True adds the sidebar."""
     kind = "side" if side else "full"
     W, H = 1280, 720
-    L = Layout(skin, win, lid(t, kind), W, H, min_size=(1040 if side else 860, 420))     # 860: room for a 174 px seek track
-    art = Art(skin, t)
+    L = Layout(skin, win, lid(t, kind, scale, language), W, H,
+               min_size=(1040 if side else 860, 420))     # 860: room for a 174 px seek track
+    art = Art(skin, t, language)
     L.image(art.px("chrome"), 0, 0, W, H, anchor="fill", resize="scale", action="move", hint="bg")
     if side:
-        sidebar(L, art)
+        sidebar(L, art, scale)
         stage(L, art, 427, 40, W - 10, H - 54, ("panel", "chrome", "chrome", "panel"))
     else:
         stage(L, art, 10, 40, W - 10, H - 54, ("chrome",) * 4)
-    top_bar(L, art, kind)
+    top_bar(L, art, kind, scale)
 
     def last(x, y, anchor):
         if side:
             L.button(art.icon_button("lists", 30, 32, 3, 4, active=True), x, y,
-                     f"main.setLayout({lid(t, 'full')})", "Hide playlist", anchor=anchor)
+                     f"main.setLayout({lid(t, 'full', scale, language)})",
+                     translate("Hide playlist", language), anchor=anchor)
         else:
             L.button(art.icon_button("lists", 30, 32, 3, 4), x, y,
-                     f"main.setLayout({lid(t, 'side')})", "Show playlist", anchor=anchor)
+                     f"main.setLayout({lid(t, 'side', scale, language)})",
+                     translate("Show playlist", language), anchor=anchor)
     control_bar(L, art, H - 54, W, fixed=False, last=last,
                 bg=lambda x0, y0, x1, y1: P.solid(x1 - x0, y1 - y0, t["chrome"]))
 
@@ -445,10 +480,10 @@ def full_layout(skin, win, t, side):
 
 # --- mini player (Figma "Miniplayer", 970:3090) ---------------------------------------
 
-def mini_layout(skin, win, t):
+def mini_layout(skin, win, t, scale=1, language="en"):
     W, H = 391, 339
-    L = Layout(skin, win, lid(t, "mini"), W, H)
-    art = Art(skin, t)
+    L = Layout(skin, win, lid(t, "mini", scale, language), W, H)
+    art = Art(skin, t, language)
     vx, vy, vw, vh = 8, 8, 375, 211
 
     bg_img = P.solid(W, H, t["border"])
@@ -462,21 +497,23 @@ def mini_layout(skin, win, t):
              anchor_l="tl", anchor_s="tl", bg=lambda x0, y0, x1, y1: bg_img.crop((x0, y0, x1, y1)),
              name="miniseek")
 
-    f14 = L.skin.font(14)
-    L.text("$N", 12, 266 - P.ascent(14), 367, f14, t["text_hi"], visible=ACTIVE, scrolling="auto")
+    f14 = L.skin.font(14, "cjk")
+    L.text("$N", 12, 266 - P.ascent(14, "cjk"), 367, f14, t["text_hi"], visible=ACTIVE, scrolling="auto")
 
     y = 284
-    L.button(art.icon_button("previous"), 8, y, "playlist.previous()", "Previous")
+    L.button(art.icon_button("previous"), 8, y, "playlist.previous()", translate("Previous", language))
     L.toggle("vlc.isPlaying", art.accent_button("play", 46, 28), art.accent_button("pause", 46, 28),
-               "vlc.play()", "vlc.pause()", "Play", "Pause", x=40, y=y)
-    L.button(art.icon_button("next"), 88, y, "playlist.next()", "Next")
+               "vlc.play()", "vlc.pause()", translate("Play", language), translate("Pause", language), x=40, y=y)
+    L.button(art.icon_button("next"), 88, y, "playlist.next()", translate("Next", language))
     f12 = L.skin.font(12)
     L.text("$T / $D", 126, y + 19 - P.ascent(12), 126, f12, t["text"], visible=ACTIVE)
     L.toggle("vlc.isMute", art.icon_button("volume"), art.icon_button("mute"), "vlc.mute()", "vlc.mute()",
-               "Mute", "Unmute", x=257, y=y)
-    L.button(art.icon_button("lists"), 289, y, f"main.setLayout({lid(t, 'side')})", "Full player with playlist")
-    L.button(art.icon_button("window"), 321, y, f"main.setLayout({lid(t, 'full')})", "Full player")
-    L.button(art.icon_button("close"), 353, y, "vlc.quit()", "Quit VLC")
+               translate("Mute", language), translate("Unmute", language), x=257, y=y)
+    L.button(art.icon_button("lists"), 289, y, f"main.setLayout({lid(t, 'side', scale, language)})",
+             translate("Full player with playlist", language))
+    L.button(art.icon_button("window"), 321, y, f"main.setLayout({lid(t, 'full', scale, language)})",
+             translate("Full player", language))
+    L.button(art.icon_button("close"), 353, y, "vlc.quit()", translate("Quit VLC", language))
     return L
 
 
@@ -487,40 +524,44 @@ BANDS = ("60 Hz", "170 Hz", "310 Hz", "600 Hz", "1 kHz", "3 kHz", "6 kHz", "12 k
 
 def toggle_images(art, on):
     """The Figma 'Toggle' (536:1014): a dark pill with a square knob and ON / OFF."""
-    t = art.t
+    t, language = art.t, art.language
+    weight = text_weight(language, "semibold")
 
     def draw(state):
         img = P.rrect(64, 28, (0, 0, 64, 28), 6, t["track"])
         kx = 38 if state else 2
         img.alpha_composite(P.rrect(64, 28, (kx, 2, kx + 24, 26), 4, t["accent" if state else "toggle_off_knob"]))
-        return P.text(img, 20 if state else 45, 18, "ON" if state else "OFF", 11,
-                      t["accent" if state else "text_dim"], weight="semibold", align="center")
+        label = translate("ON" if state else "OFF", language)
+        return P.text(img, 20 if state else 45, 18, label, 11,
+                      t["accent" if state else "text_dim"], weight=weight, align="center")
     off = art.get("toggle.off", lambda: draw(False), on, opaque=True)
     on_ = art.get("toggle.on", lambda: draw(True), on, opaque=True)
     return (off, off, off), (on_, on_, on_)
 
 
-def eq_layout(skin, win, t):
+def eq_layout(skin, win, t, scale=1, language="en"):
     W, row_h = 400, 34
     first = 92
     bands_top = first + row_h + 8
     H = bands_top + 10 * row_h + 22
-    L = Layout(skin, win, lid(t, "eq"), W, H)
-    art = Art(skin, t)
+    L = Layout(skin, win, lid(t, "eq", scale, language), W, H)
+    art = Art(skin, t, language)
     tx0, tx1 = 100, 372                           # track
     rows = [("Preamp", "equalizer.preamp", first)] + [
         (b, f"equalizer.band({i})", bands_top + i * row_h) for i, b in enumerate(BANDS)]
 
     bg_img = P.solid(W, H, t["border"])
     bg_img.alpha_composite(P.rrect(W, H, (1, 1, W - 1, H - 1), 0, t["card_outer"]))
-    P.text(bg_img, 20, 34, "Equalizer", 16, t["text_hi"], weight="semibold")
+    P.text(bg_img, 20, 34, translate("Equalizer", language), 16, t["text_hi"],
+           weight=text_weight(language, "semibold"))
     bg_img.alpha_composite(P.rrect(W, H, (12, 56, W - 12, H - 12), 6, t["card"]))
     mid = (tx0 + tx1) // 2
     for label, x, align in (("−20 dB", tx0, "left"), ("0 dB", mid, "center"), ("+20 dB", tx1, "right")):
         P.text(bg_img, x, 80, label, 11, t["text_dim"], align=align)
     bg_img.alpha_composite(P.rrect(W, H, (mid, 84, mid + 1, H - 22), 0, P.mix(t["card"], t["text_dim"], .45)))
     for label, _, y in rows:
-        P.text(bg_img, 28, y + 22, label, 14, t["text"])
+        P.text(bg_img, 28, y + 22, translate(label, language), 14, t["text"],
+               weight=text_weight(language) if label == "Preamp" else "regular")
         bg_img.alpha_composite(P.rrect(W, H, (tx0, y + 9, tx1, y + 25), 4, t["track"]))
     bg_img.alpha_composite(P.rrect(W, H, (28, bands_top - 5, W - 28, bands_top - 4), 0, t["divider"]))
     L.image(art.get("eq.bg", bg_img), 0, 0, action="move", hint="bg")
@@ -528,49 +569,61 @@ def eq_layout(skin, win, t):
     for label, value, y in rows:
         progress(L, art, x0=tx0, x1=tx1, y=y + 9, h=16, inset=2, r_track=4, r_fill=3, handle=(8, 24, 4),
                  anchor_l="tl", anchor_s="tl", bg=lambda x0, y0, x1, y1: bg_img.crop((x0, y0, x1, y1)),
-                 value=value, tip=label, visible=None, handle_on="card",
+                 value=value, tip=translate(label, language), visible=None, handle_on="card",
                  handle_keys=("eq_handle", "accent_hover", "accent_down"), draw_track=False,
                  name="eq" + value.split(".")[1].replace("(", "").replace(")", ""))
     off, on = toggle_images(art, "card_outer")
     L.toggle("equalizer.isEnabled", off, on, "equalizer.enable()", "equalizer.disable()",
-               "Turn the equalizer on", "Turn the equalizer off", x=W - 20 - 36 - 10 - 64, y=14)
-    L.button(art.window_button("close", on="card_outer"), W - 48, 16, "eqwin.hide()", "Close")
+               translate("Turn the equalizer on", language), translate("Turn the equalizer off", language),
+               x=W - 20 - 36 - 10 - 64, y=14)
+    L.button(art.window_button("close", on="card_outer"), W - 48, 16, "eqwin.hide()",
+             translate("Close", language))
     return L
 
 
 # --- fullscreen controller ----------------------------------------------------------
 
-def fsc_layout(skin, win, t):
+def fsc_layout(skin, win, t, scale=1, language="en"):
     """The bar again, floating over fullscreen video."""
     W, H = 1000, 56
-    L = Layout(skin, win, lid(t, "fsc"), W, H)
-    art = Art(skin, t)
+    L = Layout(skin, win, lid(t, "fsc", scale, language), W, H)
+    art = Art(skin, t, language)
     bg_img = P.solid(W, H, t["border"])
     bg_img.alpha_composite(P.rrect(W, H, (1, 1, W - 1, H - 1), 0, t["chrome"]))
     L.image(art.get("fsc.bg", bg_img), 0, 0, action="move", hint="bg")
 
     def last(x, y, anchor):
-        L.button(art.icon_button("fullscreen_exit", 30, 32, 3, 4), x, y, "vlc.fullscreen()", "Leave fullscreen",
-                 anchor=anchor)
+        L.button(art.icon_button("fullscreen_exit", 30, 32, 3, 4), x, y, "vlc.fullscreen()",
+                 translate("Leave fullscreen", language), anchor=anchor)
     control_bar(L, art, 1, W, fixed=True, last=last, bg=lambda x0, y0, x1, y1: bg_img.crop((x0, y0, x1, y1)))
     return L
 
 
 # --- menus ----------------------------------------------------------------------
 
-def menus(skin):
+def menus(skin, scale=1, language="en"):
     """The '...' menu (Figma 'menu', 6062:13354) per layout, and the playback menu
     (Figma 'right-click menu', 6065:13616). Shortcuts shown are VLC's own hotkeys."""
+    def localized(items):
+        result = []
+        for item in items:
+            if item is None:
+                result.append(None)
+                continue
+            label, action = item
+            result.append((translate(label, language), action))
+        return result
+
     for t in THEMES:
         o = other(t)
         for kind in ("full", "side", "mini"):
             view = [("Hide Playlist" if kind == "side" else "Show Playlist",
-                     f"main.setLayout({lid(t, 'full' if kind == 'side' else 'side')})"),
+                     f"main.setLayout({lid(t, 'full' if kind == 'side' else 'side', scale, language)})"),
                     ("Full Player" if kind == "mini" else "Mini Player",
-                     f"main.setLayout({lid(t, 'full' if kind == 'mini' else 'mini')})"),
-                    (f"{o['name'].title()} Theme", switch_theme(t, kind)),
+                     f"main.setLayout({lid(t, 'full' if kind == 'mini' else 'mini', scale, language)})"),
+                    (f"{o['name'].title()} Theme", switch_theme(t, kind, scale, language)),
                     ("Always on Top", "vlc.onTop()")]
-            skin.menu(f"{lid(t, kind)}_menu", [
+            skin.menu(f"{lid(t, kind, scale, language)}_menu", localized([
                 ("Open File(s)...", "dialogs.file()"),
                 ("Open Folder...", "dialogs.directory()"),
                 ("Open Network Stream...", "dialogs.net()"),
@@ -585,8 +638,9 @@ def menus(skin):
                 ("Settings...", "dialogs.prefs()"),
                 None,
                 ("Quit VLC\tCtrl+Q", "vlc.quit()"),
-            ])
-    skin.menu("playback_menu", [
+            ]))
+    playback_menu = "playback_menu_cn" if language == "zh-CN" else "playback_menu"
+    skin.menu(playback_menu, localized([
         ("Play\tSpace", "vlc.play()"),
         ("Pause\tSpace", "vlc.pause()"),
         ("Stop\tS", "vlc.stop()"),
@@ -604,7 +658,7 @@ def menus(skin):
         ("Audio...", "dialogs.audioPopup()"),
         ("Subtitle and More...", "dialogs.popup()"),
         ("More Settings...", "dialogs.prefs()"),
-    ])
+    ]))
 
 
 # --- build -------------------------------------------------------------------------
@@ -612,39 +666,51 @@ def menus(skin):
 MAIN_KINDS = ("full", "side", "mini")
 
 
-def build(start="dark_full", show_eq=False, preview_fsc=False):
+def build(start="dark_full", show_eq=False, preview_fsc=False, scale=1, language="en"):
     """start: the layout the main window opens with (VLC remembers the last one used
     after that). show_eq opens the equalizer too. preview_fsc renames the fullscreen
     controller so it opens as an ordinary window. The last two are for screenshots."""
-    if OUT.exists():
-        shutil.rmtree(OUT)
-    rows = P.rows_font(Path(tempfile.mkdtemp()) / "InterRows-Regular.ttf", ROW_TEXT, ROW)
-    skin = Skin("VLC Redesign", "Design by Juxtopposed, skinned by build.py", OUT,
-                {**P.FONT_FILES, "rows": rows}, P.FONT_LICENSE,
+    if scale not in (1, 2):
+        raise ValueError("scale must be 1 or 2")
+    if language not in ("en", "zh-CN"):
+        raise ValueError("language must be 'en' or 'zh-CN'")
+    base_name = f"{NAME}-CN" if language == "zh-CN" else NAME
+    name = base_name if scale == 1 else f"{base_name}-{scale}x"
+    out = DIST / name
+    if out.exists():
+        shutil.rmtree(out)
+    rows = P.rows_font(Path(tempfile.mkdtemp()) / "VLCRedesignRows.ttf", ROW_TEXT, ROW,
+                       weight="cjk", family="VLC Redesign Rows")
+    skin = Skin(translate("VLC Redesign", language),
+                translate("Design by Juxtopposed, skinned by build.py", language), out,
+                {**P.FONT_FILES, "rows": rows}, P.FONT_LICENSES, scale=scale,
                 webpage="https://github.com/mamogh/vlc-redesign-skin")
-    menus(skin)
+    menus(skin, scale, language)
 
     # skins2 starts each window on the layout added last
     start_t = DARK if start.startswith("dark") else LIGHT
+    start_kind = start.split("_")[1]
+    start_layout = lid(start_t, start_kind, scale, language)
     main = skin.window("main", position="Center", dragdrop="true", playondrop="true")
-    order = [(t, k) for t in THEMES for k in MAIN_KINDS if lid(t, k) != start] + [(start_t, start.split("_")[1])]
+    order = ([(t, k) for t in THEMES for k in MAIN_KINDS if lid(t, k, scale, language) != start_layout]
+             + [(start_t, start_kind)])
     for t, kind in order:
         if kind == "mini":
-            mini_layout(skin, main, t)
+            mini_layout(skin, main, t, scale, language)
         else:
-            full_layout(skin, main, t, kind == "side")
+            full_layout(skin, main, t, kind == "side", scale, language)
     eq = skin.window("eqwin", visible="true" if show_eq else "false", position="Center")
     fsc = (skin.window("fscpreview", position="Center") if preview_fsc else
            skin.window("fullscreenController", position="South", ymargin="3%"))
     for t in (other(start_t), start_t):
-        eq_layout(skin, eq, t)
-        fsc_layout(skin, fsc, t)
+        eq_layout(skin, eq, t, scale, language)
+        fsc_layout(skin, fsc, t, scale, language)
 
     skin.write()
-    problems = check_theme.check(OUT / "theme.xml")
+    problems = check_theme.check(out / "theme.xml")
     if problems:
         raise SystemExit("theme.xml has problems:\n  " + "\n  ".join(problems))
-    vlt = DIST / f"{NAME}.vlt"
+    vlt = DIST / f"{name}.vlt"
     # dist/ is committed, so the archive is made byte-for-byte reproducible: no timestamps,
     # owners or ordering that change from build to build
     def plain(info):
@@ -652,11 +718,11 @@ def build(start="dark_full", show_eq=False, preview_fsc=False):
         return info
     with open(vlt, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, filename="") as gz, \
             tarfile.open(fileobj=gz, mode="w", format=tarfile.USTAR_FORMAT) as tar:
-        tar.add(OUT, arcname=NAME, recursive=False, filter=plain)
-        for path in sorted(OUT.rglob("*")):
-            tar.add(path, arcname=f"{NAME}/{path.relative_to(OUT).as_posix()}", recursive=False, filter=plain)
-    images = len(list((OUT / "img").glob("*.png")))
-    print(f"{OUT / 'theme.xml'}: {images} images")
+        tar.add(out, arcname=name, recursive=False, filter=plain)
+        for path in sorted(out.rglob("*")):
+            tar.add(path, arcname=f"{name}/{path.relative_to(out).as_posix()}", recursive=False, filter=plain)
+    images = len(list((out / "img").glob("*.png")))
+    print(f"{out / 'theme.xml'}: {images} images")
     print(f"{vlt}: {vlt.stat().st_size // 1024} KiB")
 
 
@@ -667,5 +733,13 @@ if __name__ == "__main__":
     ap.add_argument("--show-eq", action="store_true", help="open the equalizer window at start")
     ap.add_argument("--preview-fsc", action="store_true",
                     help="show the fullscreen controller as a normal window (for screenshots)")
+    ap.add_argument("--scale", type=int, choices=(1, 2),
+                    help="build only this scale (default: build both 1x and 2x)")
+    ap.add_argument("--language", choices=("en", "zh-CN"),
+                    help="build only this language (default: English only with --scale, otherwise both)")
     a = ap.parse_args()
-    build(a.start, a.show_eq, a.preview_fsc)
+    languages = ((a.language,) if a.language is not None else
+                 (("en",) if a.scale is not None else ("en", "zh-CN")))
+    for language in languages:
+        for scale in (a.scale,) if a.scale is not None else (1, 2):
+            build(a.start, a.show_eq, a.preview_fsc, scale, language)

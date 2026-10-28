@@ -1,6 +1,8 @@
 """Run the skin in VLC and check that its controls do what they should.
 
     python tools/smoke_test.py
+    python tools/smoke_test.py --scale 2
+    python tools/smoke_test.py --language zh-CN
 
 For each scenario this builds the skin to open on the layout under test, starts VLC with
 --ignore-config (the user's settings are neither read nor changed), clicks controls by
@@ -15,6 +17,7 @@ window takes focus, so using the PC meanwhile breaks the menu checks.
 Click positions follow the layouts in build.py at their default sizes (1280 x 720 player,
 391 x 339 mini player, 400 x 496 equalizer); move a control there and update it here.
 """
+import argparse
 import base64
 import ctypes
 import ctypes.wintypes as wt
@@ -26,8 +29,11 @@ import time
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
 from run_skin import VLC, print_window, user32, windows_of  # noqa: E402
+from skinlib.i18n import translate  # noqa: E402
 
 # menu handles are 64-bit pointers; ctypes would otherwise truncate them to int
 user32.SendMessageW.restype = ctypes.c_void_p
@@ -36,8 +42,9 @@ user32.GetMenuItemCount.argtypes = [ctypes.c_void_p]
 user32.GetMenuState.argtypes = [ctypes.c_void_p, wt.UINT, wt.UINT]
 user32.GetMenuStringW.argtypes = [ctypes.c_void_p, wt.UINT, ctypes.c_wchar_p, ctypes.c_int, wt.UINT]
 
-ROOT = Path(__file__).resolve().parent.parent
 SHOTS = ROOT / "shots" / "smoke"
+SCALE = 1
+LANGUAGE = "en"
 SKIN = ROOT / "dist" / "VLC-Redesign" / "theme.xml"
 VIDEO, MUSIC = ROOT / "testmedia" / "test-video.mp4", ROOT / "testmedia" / "untangle.mp3"
 PORT, HTTP_PORT, HTTP_PASSWORD = 4252, 4253, "smoke"
@@ -48,6 +55,36 @@ PANEL = {"dark": (0x0F, 0x0F, 0x0F), "light": (0xC2, 0xC1, 0xC1)}
 ACCENT = (0xD3, 0x79, 0x18)
 
 results = []
+
+
+def set_scale(scale, language="en"):
+    global SCALE, LANGUAGE, SKIN
+    SCALE = scale
+    LANGUAGE = language
+    directory = "VLC-Redesign-CN" if language == "zh-CN" else "VLC-Redesign"
+    if scale == 2:
+        directory += "-2x"
+    SKIN = ROOT / "dist" / directory / "theme.xml"
+
+
+def physical(value):
+    return round(value * SCALE)
+
+
+def point(x, y):
+    return physical(x), physical(y)
+
+
+def dimensions(width, height):
+    return point(width, height)
+
+
+def crop(img, box):
+    return img.crop(tuple(physical(value) for value in box))
+
+
+def getpixel(img, xy):
+    return img.getpixel(point(*xy))
 
 
 def check(name, ok, detail=""):
@@ -118,15 +155,18 @@ class Vlc:
         _, r = win or self.main()
         return r[2] - r[0], r[3] - r[1]
 
-    def click(self, x, y, win=None, settle=0.8):
+    def click(self, x, y, win=None, settle=0.8, logical=True):
         hwnd = (win or self.main())[0]
+        if logical:
+            x, y = point(x, y)
         lp = (y << 16) | x
         user32.PostMessageW(hwnd, 0x200, 0, lp)        # WM_MOUSEMOVE: skins2 needs the hover first
         time.sleep(0.15)
         user32.PostMessageW(hwnd, 0x201, 1, lp)        # WM_LBUTTONDOWN
         time.sleep(0.05)
         user32.PostMessageW(hwnd, 0x202, 0, lp)        # WM_LBUTTONUP
-        user32.PostMessageW(hwnd, 0x200, 0, (2 << 16) | 2)   # move away so hover looks don't linger
+        away_x, away_y = point(2, 2)
+        user32.PostMessageW(hwnd, 0x200, 0, (away_y << 16) | away_x)  # clear the hover look
         time.sleep(settle)
 
     def shot(self, label, win=None):
@@ -205,8 +245,8 @@ def menu_item(v, label):
 
 
 def build(start):
-    subprocess.run([sys.executable, str(ROOT / "build.py"), "--start", start], check=True,
-                   stdout=subprocess.DEVNULL)
+    subprocess.run([sys.executable, str(ROOT / "build.py"), "--start", start, "--scale", str(SCALE),
+                    "--language", LANGUAGE], check=True, stdout=subprocess.DEVNULL)
 
 
 def time_fraction(v):
@@ -220,8 +260,8 @@ def full_player():
     print("dark player, video then music queued")
     build("dark_full")
     v = Vlc("full", (VIDEO, MUSIC))
-    W, H, bar = 1280, 720, 720 - 54 + 27          # bar centre line
-    check("window opens at 1280 x 720", v.size() == (W, H), f"{v.size()}")
+    W, H, bar = 1280, 720, 720 - 54 + 27          # logical bar centre line
+    check("window opens at 1280 x 720", v.size() == dimensions(W, H), f"{v.size()}")
     # the first start after a build can be slow; give playback time to begin
     check("video starts", v.wait(lambda s: s.get("state") == "playing" and s.get("position", 0) > 0,
                                  timeout=20).get("state") == "playing")
@@ -241,12 +281,12 @@ def full_player():
     v.click(988 + 22, bar)                         # volume wedge starts at W - 292, 88 wide
     vol = (v.wait(lambda s: abs(s.get("volume", -1) - 128) <= 12, 3)).get("volume", -1)
     check("clicking the volume wedge at 25% sets 50% volume", abs(vol - 128) <= 12, f"volume {vol}/256")
-    before = v.shot("volume").crop((W - 327, H - 41, W - 297, H - 13))
+    before = crop(v.shot("volume"), (W - 327, H - 41, W - 297, H - 13))
     v.click(W - 312, bar)
-    after = v.shot("muted").crop((W - 327, H - 41, W - 297, H - 13))
+    after = crop(v.shot("muted"), (W - 327, H - 41, W - 297, H - 13))
     check("mute button swaps to the muted icon", before.tobytes() != after.tobytes())
     v.click(W - 312, bar)
-    unmuted = v.shot("unmuted").crop((W - 327, H - 41, W - 297, H - 13))
+    unmuted = crop(v.shot("unmuted"), (W - 327, H - 41, W - 297, H - 13))
     check("pressing it again swaps back", unmuted.tobytes() == before.tobytes())
 
     title = v.status()["title"]
@@ -254,7 +294,7 @@ def full_player():
     new = v.wait(lambda s: s.get("title") and s.get("title") != title).get("title")
     check("next button plays the next item", new and new != title, f"{title!r} -> {new!r}")
     time.sleep(1)
-    cover = v.shot("music").crop((400, 120, 880, 520))
+    cover = crop(v.shot("music"), (400, 120, 880, 520))
     # the test cover's rings are purple; nothing of the skin's own is
     px = cover.get_flattened_data()
     purple = sum(1 for r, g, b in px if b > 100 and b > g + 40) / len(px)
@@ -266,59 +306,60 @@ def full_player():
     v.click(W - 184 + 15, bar - 2)
     time.sleep(.5)
     wins = v.skin_windows()
-    eq = next((w for w in wins if v.size(w) == (400, 496)), None)
+    eq = next((w for w in wins if v.size(w) == dimensions(400, 496)), None)
     check("audio button opens the equalizer", eq is not None)
     if eq:
         v.shot("eq", eq)
         v.click(270 + 50, 28, eq)                  # the toggle, where its knob goes when on
-        knob = v.shot("eq-on", eq).getpixel((270 + 50, 28))
+        knob = getpixel(v.shot("eq-on", eq), (270 + 50, 28))
         check("equalizer toggle turns on", near(knob, ACCENT, 20), f"knob {knob}")
         v.click(270 + 50, 28, eq)
         v.click(352 + 18, 28, eq)                  # close
         time.sleep(.5)
-        check("equalizer close button hides it", all(v.size(w) != (400, 496) for w in v.skin_windows()))
+        check("equalizer close button hides it",
+              all(v.size(w) != dimensions(400, 496) for w in v.skin_windows()))
 
     v.click(89 + 14, 20)                           # top bar sidebar toggle
-    px = v.shot("sidebar").getpixel((300, 600))
+    px = getpixel(v.shot("sidebar"), (300, 600))
     check("sidebar button opens the playlist layout", near(px, PANEL["dark"], 4), f"pixel {px}")
-    shuffle_off = v.shot("sidebar").crop((301, 58, 329, 86))
+    shuffle_off = crop(v.shot("sidebar"), (301, 58, 329, 86))
     v.click(315, 72)
-    shuffle_on = v.shot("shuffled").crop((301, 58, 329, 86))
+    shuffle_on = crop(v.shot("shuffled"), (301, 58, 329, 86))
     check("shuffle button lights up", shuffle_off.tobytes() != shuffle_on.tobytes()
           and any(near(p, ACCENT, 30) for p in shuffle_on.get_flattened_data()))
     v.click(315, 72)
-    states = [v.shot("repeat").crop((339, 58, 367, 86)).tobytes()]
+    states = [crop(v.shot("repeat"), (339, 58, 367, 86)).tobytes()]
     for _ in range(3):
         v.click(353, 72)
-        states.append(v.shot("repeat").crop((339, 58, 367, 86)).tobytes())
+        states.append(crop(v.shot("repeat"), (339, 58, 367, 86)).tobytes())
     check("repeat cycles off, all, one, off", len(set(states[:3])) == 3 and states[3] == states[0])
     v.click(W - 50 + 15, bar - 2)                  # bar playlist button closes the sidebar
-    px = v.shot("closed-sidebar").getpixel((300, 600))
+    px = getpixel(v.shot("closed-sidebar"), (300, 600))
     check("playlist button closes the sidebar", not near(px, PANEL["dark"], 4), f"pixel {px}")
 
     # the "..." menu
-    why = menu_item(v, "Show Playlist")
-    px = v.shot("menu-playlist").getpixel((300, 600))
+    why = menu_item(v, translate("Show Playlist", LANGUAGE))
+    px = getpixel(v.shot("menu-playlist"), (300, 600))
     check("menu: Show Playlist opens the sidebar layout", near(px, PANEL["dark"], 4), why or f"pixel {px}")
     v.click(W - 50 + 15, bar - 2)
-    why = menu_item(v, "Mini Player")
-    check("menu: Mini Player opens the mini player", v.size() == (391, 339), why or f"{v.size()}")
+    why = menu_item(v, translate("Mini Player", LANGUAGE))
+    check("menu: Mini Player opens the mini player", v.size() == dimensions(391, 339), why or f"{v.size()}")
     v.shot("menu-mini")
     v.click(336, 298, settle=1.5)                  # and back to the full player
-    why = menu_item(v, "Light Theme")
-    px = v.shot("menu-light").getpixel((5, 300))
+    why = menu_item(v, translate("Light Theme", LANGUAGE))
+    px = getpixel(v.shot("menu-light"), (5, 300))
     check("menu: Light Theme switches theme", near(px, (0xAB, 0xAB, 0xAB), 4), why or f"pixel {px}")
-    why = menu_item(v, "Dark Theme")
-    px = v.shot("menu-dark").getpixel((5, 300))
+    why = menu_item(v, translate("Dark Theme", LANGUAGE))
+    px = getpixel(v.shot("menu-dark"), (5, 300))
     check("menu: Dark Theme switches back", near(px, (0x1B, 0x1B, 0x1B), 4), why or f"pixel {px}")
 
     v.click(W - 114 + 18, 20)                      # maximize
     time.sleep(.5)
     w, h = v.size()
-    check("maximize fills the screen's work area", w > W and h > H, f"{w} x {h}")
-    v.click(w - 114 + 18, 20)                      # restore, now at the maximized size's position
+    check("maximize fills the screen's work area", w > physical(W) and h > physical(H), f"{w} x {h}")
+    v.click(w - physical(114) + physical(18), physical(20), logical=False)  # restore
     time.sleep(.5)
-    check("restore returns to the previous size", v.size() == (W, H), f"{v.size()}")
+    check("restore returns to the previous size", v.size() == dimensions(W, H), f"{v.size()}")
     v.close()
 
 
@@ -326,11 +367,12 @@ def light_player():
     print("light player, music only")
     build("light_full")
     v = Vlc("light", (MUSIC,))
-    check("light player opens", v.size() == (1280, 720), f"{v.size()}")
+    check("light player opens", v.size() == dimensions(1280, 720), f"{v.size()}")
     v.wait(lambda s: s.get("state") == "playing")
     time.sleep(1)
     img = v.shot("music")
-    check("light theme chrome", near(img.getpixel((5, 300)), (0xAB, 0xAB, 0xAB), 4), f"{img.getpixel((5, 300))}")
+    px = getpixel(img, (5, 300))
+    check("light theme chrome", near(px, (0xAB, 0xAB, 0xAB), 4), f"{px}")
     v.click(1280 - 42 + 18, 20)                    # close button quits VLC
     try:
         v.proc.wait(timeout=8)
@@ -344,7 +386,7 @@ def mini_player():
     print("dark mini player, video")
     build("dark_mini")
     v = Vlc("mini", (VIDEO,))
-    check("mini player opens at 391 x 339", v.size() == (391, 339), f"{v.size()}")
+    check("mini player opens at 391 x 339", v.size() == dimensions(391, 339), f"{v.size()}")
     v.wait(lambda s: s.get("state") == "playing")
     v.shot("playing")
     v.click(63, 298)
@@ -355,7 +397,7 @@ def mini_player():
     v.shot("seeked")
     v.click(336, 298)                              # expand to the full player
     time.sleep(.5)
-    check("expand button opens the full player", v.size() == (1280, 720), f"{v.size()}")
+    check("expand button opens the full player", v.size() == dimensions(1280, 720), f"{v.size()}")
     v.shot("expanded")
     v.close()
 
@@ -364,17 +406,22 @@ def light_mini():
     print("light mini player, nothing playing")
     build("light_mini")
     v = Vlc("minilight")
-    check("light mini player opens", v.size() == (391, 339), f"{v.size()}")
+    check("light mini player opens", v.size() == dimensions(391, 339), f"{v.size()}")
     v.shot("stopped")
     v.click(304, 298)                              # playlist button: full player with sidebar
     time.sleep(.5)
-    px = v.shot("sidebar").getpixel((300, 600))
-    check("mini playlist button opens the sidebar layout", v.size() == (1280, 720) and near(px, PANEL["light"], 4),
-          f"{v.size()}, pixel {px}")
+    px = getpixel(v.shot("sidebar"), (300, 600))
+    check("mini playlist button opens the sidebar layout",
+          v.size() == dimensions(1280, 720) and near(px, PANEL["light"], 4), f"{v.size()}, pixel {px}")
     v.close()
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scale", type=int, choices=(1, 2), default=1)
+    ap.add_argument("--language", choices=("en", "zh-CN"), default="en")
+    a = ap.parse_args()
+    set_scale(a.scale, a.language)
     SHOTS.mkdir(parents=True, exist_ok=True)
     for old in SHOTS.glob("*"):
         old.unlink()

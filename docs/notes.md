@@ -9,15 +9,41 @@ building it taught. The [README](../README.md) is the short version.
 python build.py
 ```
 
-This regenerates `dist/VLC-Redesign.vlt` and the same files unpacked in `dist/VLC-Redesign/`.
-It needs Python 3 with Pillow and fontTools (lxml too, for full DTD validation). The skin bundles Inter, the design's typeface, from `fonts/`
-(SIL Open Font License, see `fonts/Inter-LICENSE.txt`), because skins2 only loads fonts shipped
-inside the skin.
-
-To try a build once without changing any VLC settings:
+With [uv](https://docs.astral.sh/uv/), the equivalent command with all build dependencies is:
 
 ```bash
-"C:\Program Files\VideoLAN\VLC\vlc.exe" -I skins --skins2-last="C:\dev\vlcskin\dist\VLC-Redesign.vlt"
+uv run --with pillow --with fonttools --with lxml python build.py
+```
+
+This regenerates all four packages plus the unpacked files under `dist/`:
+
+- English: `dist/VLC-Redesign.vlt` (1×) and `dist/VLC-Redesign-2x.vlt` (2×)
+- Simplified Chinese: `dist/VLC-Redesign-CN.vlt` (1×) and `dist/VLC-Redesign-CN-2x.vlt` (2×)
+
+Use `--language` to build only one language, or `--scale 1` / `--scale 2` to build only one scale;
+the options can be combined. Install the 1× package on standard displays and the 2× package on
+4K displays used at 200% scaling; Simplified Chinese users should choose
+`VLC-Redesign-CN-2x.vlt` there. The build needs Python 3 with Pillow and fontTools; lxml enables
+full DTD validation.
+
+The Simplified Chinese packages localize fixed labels, button tooltips, menus and the equalizer.
+Dynamic media titles and playlist entries are not baked into the packages: VLC continues to draw
+them with Noto Sans SC, including Chinese and mixed-script text.
+
+The skin bundles fonts from `fonts/` because skins2 only loads fonts shipped inside the skin.
+Inter (SIL Open Font License, see `fonts/Inter-LICENSE.txt`) is used for static English labels.
+[Noto Sans SC](https://github.com/notofonts/noto-cjk), from the official Noto CJK project and also
+under the SIL Open Font License (see `fonts/NotoSansSC-LICENSE.txt`), is used for dynamic media
+titles and playlist text, including Chinese titles.
+
+The 2× build resamples the existing bitmap and icon resources at twice their resolution; it does
+not require a separate set of source icons. Dynamic text remains text in `theme.xml` and is drawn
+by VLC at doubled font sizes, rather than being enlarged as a bitmap.
+
+To try a build once without changing any VLC settings (change the package name to test 2×):
+
+```bash
+"C:\Program Files\VideoLAN\VLC\vlc.exe" -I skins --skins2-last="C:\Code\vlc-redesign-skin\dist\VLC-Redesign.vlt"
 ```
 
 ## What is in it
@@ -56,6 +82,11 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
   "Media Library" node shows up as a row.
 - **Windows resize only from the right edge, the bottom edge and that corner**: those are the
   only resize actions skins2 has.
+- **Display scaling cannot switch automatically.** skins2 cannot make one package follow the
+  system DPI or redraw at a different DPI while VLC is running. Use a 1× package at standard
+  scaling and the matching 2× package for 4K/200% (`VLC-Redesign-CN-2x.vlt` for Simplified
+  Chinese); after changing displays or scaling, select the matching package and restart VLC.
+  Moving a running window between monitors does not switch packages.
 
 ## How it is built (and what skins2 taught)
 
@@ -77,33 +108,41 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
 
 ## Checking it works
 
-1. **Every build** runs `tools/check_theme.py` and stops if it finds a problem. It validates
-   theme.xml against VLC's own `skin.dtd` (fully with lxml installed, a smaller check without)
-   and checks ids are unique. skins2 itself
-   only logs a warning and leaves the control dead, so the checker makes sure every image,
-   font, action, variable and text token is one skins2 knows (lists from VLC 3.0's source),
-   and that every control lies inside its layout.
-2. **`python tools/smoke_test.py`** runs the skin in VLC (`--ignore-config`) and checks 37
-   things across the dark and light player, the sidebar, the mini player and the equalizer:
-   play/pause, seeking and volume by clicking, mute, next/previous, the music cover, the
-   equalizer window and its toggle, shuffle and the repeat cycle, sidebar open/close,
-   maximize/restore, expanding the mini player, the "..." menu's playlist, mini player and
-   theme items, and quitting. It clicks by posting mouse
-   messages to VLC's window (and keystrokes to its menus), so the real cursor never moves, reads VLC's state from its HTTP
-   interface, and fails on any skins2 warning in VLC's log. Screenshots of each step land in
-   `shots/smoke/`. Create its media first with `python tools/make_testmedia.py` (needs ffmpeg).
-   Leave the PC alone while it runs (about two minutes): native menus close as soon as another
-   window takes focus, so using the PC meanwhile makes the menu checks fail.
+1. **Every build** runs `tools/check_theme.py` on each generated theme and stops if it finds a
+   problem. It validates theme.xml against VLC's own `skin.dtd` (fully with lxml installed, a
+   smaller check without) and checks ids are unique. skins2 itself only logs a warning and leaves
+   the control dead, so the checker makes sure every image, font, action, variable and text token
+   is one skins2 knows (lists from VLC 3.0's source), and that every control lies inside its layout.
+2. **`python tools/smoke_test.py`** tests the 1× skin in VLC (`--ignore-config`);
+   **`python tools/smoke_test.py --scale 2`** runs the same checks on the 2× skin. They cover the
+   dark and light player, the sidebar, the mini player and the equalizer: play/pause, seeking and
+   volume by clicking, mute, next/previous, the music cover, the equalizer window and its toggle,
+   shuffle and the repeat cycle, sidebar open/close, maximize/restore, expanding the mini player,
+   the "..." menu's playlist, mini player and theme items, and quitting. With uv, use
+   `uv run --with pillow --with fonttools python tools/smoke_test.py` and append `--scale 2` for
+   the second run (add `--with lxml` for full DTD validation). The test clicks by posting mouse
+   messages to VLC's window (and keystrokes to its menus), so the real cursor never moves, reads
+   VLC's state from its HTTP interface, and fails on any skins2 warning in VLC's log. Screenshots
+   of each step land in `shots/smoke/`. Create its media first with
+   `python tools/make_testmedia.py` (needs ffmpeg). Leave the PC alone while it runs (about two
+   minutes per scale): native menus close as soon as another window takes focus, so using the PC
+   meanwhile makes the menu checks fail.
 3. **`python tools/edge_cases.py`** saves screenshots to look over: the player shrunk to its
-   minimum size, a title too long to fit (it scrolls, as VLC skins do), and a 30-item
-   playlist.
-4. **By hand**, what the test cannot reach:
+   minimum size, a title too long to fit (it scrolls, as VLC skins do), and a 30-item playlist.
+   It uses the same generated media and can be run through uv in the same way as the smoke test.
+4. **By hand**, what the tests cannot reach:
    - the rest of the "..." menu and the playback menu
    - fullscreen and its floating bar, which appears on mouse movement
    - dragging the window, resizing it from the right and bottom edges, and minimizing
    - dragging files onto the window, tooltips, and scrolling a long playlist
    - the subtitles button and the dialogs it and the rail open
    - that the equalizer sliders change the sound
+   - all four packages at their intended scaling: install each 2× package at 4K/200% and check
+     icon sharpness, control alignment and dynamic text size, then repeat with the 1× packages at
+     standard scaling
+   - Simplified Chinese fixed labels, button tooltips, menus and equalizer text, plus Chinese and
+     mixed-script media titles and playlist entries, including a long scrolling title, to confirm
+     that Noto Sans SC is loaded and no characters appear as missing-glyph boxes
 
 None of this is in the skins2 documentation. Items 1–3 and 8 were measured in VLC 3.0.24, item 9 was seen in use;
 items 4–7 come from VLC's 3.0 source (`modules/gui/skins2`) and are confirmed by the skin working:
@@ -128,10 +167,9 @@ items 4–7 come from VLC's 3.0 source (`modules/gui/skins2`) and are confirmed 
    counted from zero. A SliderBackground is scaled by the ratio of the control's size to that
    size, so curves are placed so the ratio stays 1.
 6. **Playlist rows put their text at the bottom of the row**, with the font's descender as the
-   only gap below it, so in a roomy row the text sits low. The playlist therefore uses
-   "Inter Rows", a copy of Inter that `paint.rows_font` writes at build time with a deeper
-   descender, which centres the text in its 32 px row. The row icon's image (36 px wide, so the
-   text lines up with "Add media") is centred the same way.
+   only gap below it, so in a roomy row the text sits low. The playlist therefore uses a build-time
+   copy of Noto Sans SC whose vertical metrics centre the text in its 32 px row. The row icon's
+   image (36 px wide, so the text lines up with "Add media") is centred the same way.
 7. **An Image's `action` can only be `move` or a resize.** Other commands work only as `action2`
    (double-click), which is why the empty video area opens media on double-click.
 8. **Every image file costs startup time.** VLC unpacks a `.vlt` into a temp folder on every
